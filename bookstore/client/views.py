@@ -12,6 +12,7 @@ from bookstore.location import get_location
 from bookstore import db, serializer, app
 from werkzeug.security import generate_password_hash
 from bookstore.client.recommendation_engine import Recommendation_engine
+from bookstore.client.automate_sqlite_to_pkl import update_rating_matrix
 # create A Blueprint
 import json
 import sqlite3
@@ -47,8 +48,6 @@ mail = Mail(app)
 
 
 def helper():
-
-
     transactions=[]
     conn = sqlite3.connect(app.config["SQLITE_DB_DIR"])
     cur = conn.execute('SELECT * FROM order_list WHERE user_id=(?)',(current_user.id,))
@@ -92,8 +91,6 @@ def getDiscount():
     imp_data={}
     for x in data:
         imp_data.update(x.get_json())
-
-
 
     return jsonify(imp_data)
 
@@ -178,15 +175,6 @@ def get_data():
 
     #9 Personalized Offers Data
 
-    '''personalized_offers=[]
-    curr9 = conn.execute("""SELECT us.id,us.email,us.name,us.location,COUNT(*) AS Purchases FROM order_list o ,user us WHERE us.id=o.user_id GROUP BY(o.user_id) HAVING Purchases>=3""")
-    print(curr9[0])
-    for po in curr9:
-        print(po[0])
-    personalized_offers.append(po[1])
-    data["personalized_offers"]=personalized_offers
-    print(personalized_offers)'''
-
     conn.close()
     return data
 
@@ -195,7 +183,6 @@ def dashboard():
     data = get_data()
     print(data)
     return render_template('index.html',data = data)
-
 
 
 @app.route('/login' , methods=['GET' , 'POST'])
@@ -263,12 +250,13 @@ def register():
             return redirect(url_for('register'))
         else:
             pass
-        #generate_password_hash  is not working properly
+        #generate_password_hash is not working properly
         # password=generate_password_hash(password, method='sha256')
         new_user =  User(name=username,email=email,
                         password=password,location=location,age=age)
         db.session.add(new_user)
         db.session.commit()
+        update_rating_matrix()
         try:
             message = Message("You are registered in Book.ly!!",
                             sender='bookly1120@gmail.com', recipients=[email])
@@ -380,8 +368,6 @@ def single_product(bookid):
 
     print(out.columns)
     #print(out["imageUrlL"])
-
-
     return render_template('client/single.html',books=books,suggestedBooks=out,profile=helper()[0],transactions=helper()[1])
 
 
@@ -500,25 +486,13 @@ def contact():
         email = request.form.get('email')
         contact = request.form.get('contact')
         message = request.form.get('message')
-        #print(name,email,contact,message)
         if len(name) > 100 or len(email)>100 or len(contact)>20:
-            flash("Invalid details please Try agian!!","error")
+            flash("Invalid details please try agian!!","error")
             return redirect('/contact')
         entry = Contact(name=name, contact=contact,email=email, message=message)
         db.session.add(entry)
         db.session.commit()
-        flash("Thank You for Contacting Us We will reach you soon!","success")
-        #print(Contact.query.all())
-        # mail.send_message('New message from ' + name,
-        #                   sender=email,
-        #                   recipients = <gmail-user>,
-        #                   body = name + "\n" + email + "\n" + contact + "\n" + message
-        #                   )
-        # mail.send_message('New message from ' + name,
-        #                   sender= <gmail-user>,
-        #                   recipients = [email],
-        #                   body = "Thankyou for your feedback!"
-        #                   )
+        flash("Thank you for contacting us, We will reach you soon!","success")
         return redirect('/contact')
     return render_template("client/contact2.html")
 
@@ -589,3 +563,73 @@ def authordb():
             return render_template("client/author_db.html", books_details=books_details, is_named_in=True, author_name=author_name, age_group=age_group, countries=countries, top_ratings=top_ratings)
     else:
         return render_template("client/author_db.html", is_named_in=False, age_group=age_group, countries=countries, top_ratings=top_ratings)
+
+#for contact
+import csv
+import io 
+from flask import make_response
+def rowToListContact(obj):
+    lst = []
+    name = obj.name
+    email = obj.email
+    number = obj.contact
+    msg = obj.message
+    lst.append(name)
+    lst.append(email)
+    lst.append(number)
+    lst.append(msg)
+    return lst
+
+@app.route('/downloadcontact')
+# @login_required
+def ContactToCsv():
+    allContacts = Contact.query.all()
+    if len(allContacts) == 0:
+        flash("No Contacts available","danger")
+        return redirect("/")
+    si = io.StringIO()
+    cw = csv.writer(si, delimiter=",")
+    cw.writerow(["Name", "Email" , "Number", "Message"])
+    for row in allContacts:
+        row = rowToListContact(row)
+        cw.writerow(row)
+    output = make_response(si.getvalue())
+    output.headers["Content-Disposition"] = f"attachment; filename=contact_response.csv"
+    output.headers["Content-type"] = "text/csv"
+    return output
+
+
+def rowToListbooks(obj):
+    lst = []
+    ISBN = obj.ISBN
+    title = obj.title
+    author = obj.author
+    publisher = obj.publisher
+    book_cost = obj.book_cost
+    pubDate = obj.pubDate
+    lst.append(ISBN)
+    lst.append(title)
+    lst.append(author)
+    lst.append(publisher)
+    lst.append(book_cost)
+    lst.append(pubDate)
+    return lst
+
+
+@app.route('/downloadbooks')
+# @login_required
+def BooksToCsv():
+    allBooks = Books.query.all()
+    if len(allBooks) == 0:
+        flash("No Books available", "danger")
+        return redirect("/")
+    si = io.StringIO()
+    cw = csv.writer(si, delimiter=",")
+    cw.writerow(["ISBN", "title", "author", "publisher", "book_cost","pubDate"])
+    for row in allBooks:
+        row = rowToListbooks(row)
+        cw.writerow(row)
+    output = make_response(si.getvalue())
+    output.headers["Content-Disposition"] = f"attachment; filename=books_response.csv"
+    output.headers["Content-type"] = "text/csv"
+    return output
